@@ -23,6 +23,7 @@ FILE(GLOB Femtox ${CMAKE_CURRENT_LIST_DIR}/femtox/*.c)
 
 add_executable(watch 
         main.c
+        gpio.c
         ${CMAKE_CURRENT_LIST_DIR}/st7789/st7789.c
         ${CMAKE_CURRENT_LIST_DIR}/st7789/font.c
         ${Femtox}

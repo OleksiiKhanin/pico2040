@@ -21,6 +21,10 @@ static u16 st7789_width;
 static u16 st7789_height;
 static bool_t st7789_data_mode = false;
 
+void display_enable(bool on) {
+    gpio_put(st7789_cfg.gpio_bl, on);
+}
+
 static void st7789_cmd(u08 cmd, const u08* data, BaseSize_t len) {
     spi_set_format(st7789_cfg.spi, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
     st7789_data_mode = false;
@@ -69,8 +73,7 @@ static void st7789_ramwr(){
     gpio_put(st7789_cfg.gpio_dc, 1);
 }
 
-void st7789_init(const struct st7789_config* config, u16 width, u16 height)
-{
+void st7789_init(const struct st7789_config* config, u16 width, u16 height) {
     memcpy(&st7789_cfg, config, sizeof(st7789_cfg));
     st7789_width = width;
     st7789_height = height;
@@ -141,7 +144,7 @@ void st7789_init(const struct st7789_config* config, u16 width, u16 height)
     st7789_caset(0, width);
     st7789_raset(0, height);
 
-    gpio_put(st7789_cfg.gpio_bl, 1);
+    display_enable(false);
 
     spi_set_baudrate(st7789_cfg.spi, st7789_cfg.clk_perif_khz * KHZ);
 }
@@ -153,7 +156,8 @@ void st7789_write(const void* data, BaseSize_t len) {
         st7789_data_mode = true;
     }
     while(!spi_is_writable(st7789_cfg.spi));
-    BaseSize_t n = (spi_write16_blocking(st7789_cfg.spi, data, len>>1))<<1;
+    BaseSize_t n = 0;
+    if(len > 1) n = (spi_write16_blocking(st7789_cfg.spi, data, len>>1))<<1;
     if( n != len ) {
         spi_set_format(st7789_cfg.spi, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
         spi_write_blocking(st7789_cfg.spi, data+n, 1);
@@ -201,8 +205,7 @@ void st7789_vertical_scroll(u16 row) {
  * Rotate the display clockwise or anti-clockwie set by `rotation`
  * @param rotation Type of rotation. Supported values 0, 1, 2, 3
  */
-void st7789_rotate_display(u08 rotation)
-{
+void st7789_rotate_display(u08 rotation) {
 	/*
 	* 	(u08)rotation :	Rotation Type
 	* 					0 : Default landscape
@@ -213,29 +216,28 @@ void st7789_rotate_display(u08 rotation)
 	// Set max rotation value to 4
 	rotation = rotation % 4;
     u16 temp_width = 0;
-	st7789_cmd(ST7789_MADCTL, NULL, 0);		//Memory Access Control
 	switch (rotation)
 	{
 		case 0:
-			st7789_cmd(ST7789_MADCTL_RGB, NULL, 0);	// Default
+			st7789_cmd(ST7789_MADCTL, (u08[]){ST7789_MADCTL_RGB}, 1);	// Default
             temp_width = (u16)st7789_width;
             st7789_width = st7789_height;
 			st7789_height = temp_width;
 			break;
 		case 1:
-			st7789_cmd(ST7789_MADCTL_MX | ST7789_MADCTL_MY | ST7789_MADCTL_RGB, NULL, 0);
+			st7789_cmd(ST7789_MADCTL, (u08[]){ ST7789_MADCTL_MX | ST7789_MADCTL_MY | ST7789_MADCTL_RGB }, 1);
             temp_width = (u16)st7789_width;
             st7789_width = st7789_height;
 			st7789_height = temp_width;
 			break;
 		case 2:
-			st7789_cmd(ST7789_MADCTL_MY | ST7789_MADCTL_MV | ST7789_MADCTL_RGB, NULL, 0);
+			st7789_cmd(ST7789_MADCTL, (u08[]){ ST7789_MADCTL_MY | ST7789_MADCTL_MV | ST7789_MADCTL_RGB }, 1);
             temp_width = (u16)st7789_width;
 			st7789_width = st7789_height;
 			st7789_height = temp_width;
 			break;
 		case 3:
-			st7789_cmd(ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB, NULL, 0);
+			st7789_cmd(ST7789_MADCTL, (u08[]){ ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB }, 1);
             temp_width = (u16)st7789_width;
             st7789_width = st7789_height;
 			st7789_height = temp_width;

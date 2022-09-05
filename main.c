@@ -4,12 +4,12 @@
 
 #include <hardware/timer.h>
 #include <hardware/spi.h>
-#include <hardware/gpio.h>
 #include <hardware/clocks.h>
 #include <hardware/pll.h>
 #include <hardware/structs/pll.h>
 #include <hardware/structs/clocks.h>
 
+#include "gpio.h"
 #include "st7789/st7789.h"
 #include "femtox/TaskMngr.h"
 #include "femtox/PlatformSpecific.h"
@@ -24,20 +24,8 @@
 #define SPI_TX  7
 #define SPI_SCK 6
 
-#define BLUE 20
-#define GREEN 19
-#define RED 18
-
-#define BUTTON 23
-
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 240
-
-void secondCoreMain() {
-    while(true) {
-        sleep_ms(100000);
-    }
-}
 
 void measure_freqs(void) {
     uint f_pll_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_PLL_SYS_CLKSRC_PRIMARY);
@@ -48,79 +36,6 @@ void measure_freqs(void) {
     uint f_clk_usb = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_USB);
     uint f_clk_adc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_ADC);
     uint f_clk_rtc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_RTC);
-
-    // printf("pll_sys  = %dkHz\n", f_pll_sys);
-    // printf("pll_usb  = %dkHz\n", f_pll_usb);
-    // printf("rosc     = %dkHz\n", f_rosc);
-    // printf("clk_sys  = %dkHz\n", f_clk_sys);
-    // printf("clk_peri = %dkHz\n", f_clk_peri);
-    // printf("clk_usb  = %dkHz\n", f_clk_usb);
-    // printf("clk_adc  = %dkHz\n", f_clk_adc);
-    // printf("clk_rtc  = %dkHz\n", f_clk_rtc);
-
-    // Can't measure clk_ref / xosc as it is the ref
-}
-
-static void checkBtnPressed(BaseSize_t count, BaseParam_t arg_p) {
-    bool state = gpio_get(BUTTON);
-    if(!state) {
-        SetTimerTask(checkBtnPressed, count+1, (BaseParam_t)0, TICK_PER_SECOND>>4);
-        return;
-    } else if(count > 2) {
-        emitSignal(checkBtnReleased, count, (BaseParam_t)(count*(TICK_PER_SECOND>>4)));
-    }
-    gpio_set_irq_enabled(BUTTON, GPIO_IRQ_EDGE_FALL, true);
-}
-
-static void checkBtnReleased(BaseSize_t count, BaseParam_t arg_p) {
-    bool state = gpio_get(BUTTON);
-    if(state && count < 2) {
-        SetTimerTask(checkBtnReleased, count+1, arg_p, TICK_PER_SECOND>>4);
-        return;
-    } else if(state) {
-        emitSignal(checkBtnReleased, 0, NULL);
-    }
-    gpio_set_irq_enabled(BUTTON, GPIO_IRQ_EDGE_RISE, true);
-}
-
-void buttonPressed(uint gpio, uint32_t event) {
-    gpio_set_irq_enabled(
-        BUTTON, 
-        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, 
-        false);
-    if(event && GPIO_IRQ_EDGE_FALL) {
-        SetTask(checkBtnPressed, 0, NULL); //check button still pressed
-    }
-    if(event && GPIO_IRQ_EDGE_RISE) {
-        SetTask(checkBtnReleased, 0, NULL); //check button still pressed
-    }
-}
-
-void initInput() {
-    gpio_init(BUTTON);
-    gpio_set_dir(BUTTON, GPIO_IN);
-    gpio_pull_up(BUTTON);
-    gpio_set_irq_enabled_with_callback(
-        BUTTON, 
-        GPIO_IRQ_EDGE_FALL |
-        GPIO_IRQ_EDGE_RISE,
-        true, 
-        buttonPressed);
-}
-
-void initLED() {
-    gpio_init(BLUE);
-    gpio_init(GREEN);
-    gpio_init(RED);
-    gpio_set_dir(BLUE, GPIO_OUT);
-    gpio_set_dir(GREEN, GPIO_OUT);
-    gpio_set_dir(RED, GPIO_OUT);
-    gpio_set_slew_rate(BLUE, GPIO_SLEW_RATE_SLOW);
-    gpio_set_slew_rate(GREEN, GPIO_SLEW_RATE_SLOW);
-    gpio_set_slew_rate(RED, GPIO_SLEW_RATE_SLOW);
-    gpio_put(BLUE, 1);
-    gpio_put(GREEN, 1);
-    gpio_put(RED, 1);
 }
 
 void initDisplay(struct st7789_config* display) {
@@ -160,7 +75,7 @@ void displayTestTask(BaseSize_t count, BaseParam_t time) {
 
 static u16 currentBackground = ST_COLOR_BLACK;
 static u16 currentColor[2] = {ST_COLOR_WHITE, ST_COLOR_RED};
-void updateDisplay() {
+void showTimeDate() {
     const u08 date_startX = 10;
     const u08 date_startY = 20;
     const u08 time_startX = 35;
@@ -204,6 +119,96 @@ void standWithUkraine(u32 xy, BaseParam_t logoXY) {
 	st7789_draw_filled_rectangle(logoX, logoY+20, 60, 20, ST_COLOR_YELLOW);
 }
 
+
+void testBtnClick(BaseSize_t count, BaseParam_t tickTime) {
+    Time_t ticks = (Time_t)tickTime;
+    printf("button clicked by %d ticks\n", ticks);
+}
+
+void testBtnPressed() {
+    puts("button pressed");
+}
+
+void testBtnRelesed() {
+    puts("button released");
+}
+
+void testButton(){
+    connectTaskToSignal((TaskMng)testBtnClick, ClickEvent);
+    connectTaskToSignal((TaskMng)testBtnPressed, PressedEvent);
+    connectTaskToSignal((TaskMng)testBtnRelesed, ReleasedEvent);
+}
+
+void disableDisplay(BaseSize_t arg_n, BaseParam_t arg_p);
+void enableDisplay(BaseSize_t n, BaseParam_t arguments);
+void stopwatchTask();
+
+static u32 stopwatchTimer;
+static void showTimer() {
+    updateTimer(disableDisplay,0, NULL, TICK_PER_SECOND<<1);
+    u32 currentTicks = getTick();
+    u32 ticks = 0;
+    if(currentTicks > stopwatchTimer) {
+        ticks = currentTicks - stopwatchTimer;
+    } else {
+        ticks = 0xFFFFFFFF - stopwatchTimer + currentTicks;
+    }
+    Time_t seconds = ticks / TICK_PER_SECOND;
+    ticks %= TICK_PER_SECOND;
+    char secondsStr[10];
+    char ticksStr[5];
+    toStringDec(seconds, secondsStr);
+    toStringDec(ticks, ticksStr);
+    st7789_write_string(10 ,SCREEN_HEIGHT/2-10, secondsStr, Font_16x26, currentColor[0], currentBackground);
+    st7789_write_string(SCREEN_WIDTH-strSize(ticksStr)*16-10, SCREEN_HEIGHT/2-10, ticksStr, Font_16x26, currentColor[1], currentBackground);
+}
+
+void clearStopWatch() {
+    st7789_draw_filled_rectangle(10, SCREEN_HEIGHT/2-10, SCREEN_WIDTH, 26, currentBackground);
+    execCallBack(clearStopWatch);
+}
+
+void stopwatchTask() {
+    static u08 state = 0;
+    if(state) {
+        SetTask((TaskMng)delCycleTask, 0, (BaseParam_t)showTimer);
+        updateTimer(disableDisplay,0, NULL, 12*TICK_PER_SECOND);
+        state = 0;
+        execCallBack(stopwatchTask);
+        return;
+    }
+    state++;
+    stopwatchTimer = getTick();
+    clearStopWatch();
+    SetCycleTask(TICK_PER_SECOND>>4, showTimer, TRUE);
+}
+
+void disableDisplay(BaseSize_t arg_n, BaseParam_t arg_p) {
+    disconnectTaskFromSignal(stopwatchTask, PressedEvent);
+    connectTaskToSignal(enableDisplay, PressedEvent);
+	delCycleTask(arg_n, showTimeDate);
+    clearStopWatch();
+	display_enable(false);
+	execCallBack(disableDisplay);
+}
+
+void enableDisplay(BaseSize_t n, BaseParam_t arguments) {
+    disconnectTaskFromSignal(enableDisplay, PressedEvent);
+    connectTaskToSignal(stopwatchTask, PressedEvent);
+	Time_t seconds = 12;
+	if(n>0) {
+		seconds = toIntDec(arguments);
+	}
+	display_enable(true);
+	SetCycleTask(TICK_PER_SECOND, showTimeDate, TRUE);
+	SetTimerTask(disableDisplay,0, NULL, seconds*TICK_PER_SECOND);
+	execCallBack(enableDisplay);
+}
+
+static void displayCtr() {
+    connectTaskToSignal(enableDisplay, PressedEvent);
+}
+
 int main() {
     // Set the system frequency to 133 MHz. vco_calc.py from the SDK tells us
     // this is exactly attainable at the PLL from a 12 MHz crystal: FBDIV =
@@ -234,13 +239,16 @@ int main() {
         st7789_init(&display, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
     st7789_fill(currentBackground);
+    st7789_rotate_display(3);
     initFemtOS();
     setSeconds(1645653600); // 24.02.22 russia-ukraine war start
     initWatchDog();
     SetCycleTask(TICK_PER_SECOND>>1, resetWatchDog, TRUE);
     SetIdleTask(idle);
     SetTask(standWithUkraine, (SCREEN_HEIGHT-40)<<16|20, (BaseParam_t)(((u32)(SCREEN_HEIGHT-40))<<16 | (SCREEN_WIDTH-60)));
-    SetCycleTask(TICK_PER_SECOND, updateDisplay, TRUE);
+    SetTask((TaskMng)testButton, 0, NULL);
+    SetTask((TaskMng)displayCtr, 0, NULL);
+    multicore_launch_core1(runFemtOS);
     runFemtOS();
     return 0;
 }

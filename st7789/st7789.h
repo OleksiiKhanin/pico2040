@@ -15,6 +15,7 @@ struct st7789_config {
     u08 gpio_bl;
 };
 
+void display_enable(bool on);
 void st7789_init(const struct st7789_config* config, u16 width, u16 height);
 void st7789_write(const void* data, BaseSize_t len);
 void st7789_put(u16 pixel);
