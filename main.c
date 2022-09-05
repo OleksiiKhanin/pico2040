@@ -14,6 +14,7 @@
 #include "femtox/TaskMngr.h"
 #include "femtox/PlatformSpecific.h"
 #include "femtox/String.h"
+#include "femtox/logging.h"
 
 #define PLL_SYS_KHZ (120 * KHZ)
 
@@ -27,6 +28,11 @@
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 240
 
+void test1(BaseSize_t n, BaseParam_t arg_p) {
+    printf("%d\n",n);
+    SetTimerTask((TaskMng)test1, n, arg_p, TICK_PER_SECOND*n);
+}
+
 void measure_freqs(void) {
     uint f_pll_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_PLL_SYS_CLKSRC_PRIMARY);
     uint f_pll_usb = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_PLL_USB_CLKSRC_PRIMARY);
@@ -36,6 +42,7 @@ void measure_freqs(void) {
     uint f_clk_usb = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_USB);
     uint f_clk_adc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_ADC);
     uint f_clk_rtc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_RTC);
+    SetTimerTask((TaskMng)measure_freqs, 0, NULL, TICK_PER_SECOND>>1);
 }
 
 void initDisplay(struct st7789_config* display) {
@@ -73,22 +80,26 @@ void displayTestTask(BaseSize_t count, BaseParam_t time) {
     SetTimerTask(displayTestTask, count, time, t);
 }
 
+static u08 displayOnTimeout = 12;
 static u16 currentBackground = ST_COLOR_BLACK;
 static u16 currentColor[2] = {ST_COLOR_WHITE, ST_COLOR_RED};
+#define BACKGROUD_CHANGED (void*)(&currentBackground)
+
 void showTimeDate() {
     const u08 date_startX = 10;
     const u08 date_startY = 20;
     const u08 time_startX = 35;
     const u08 time_startY = 50;
 	static Date_t prev = {0};
-	static u16 prevBackGround = ST_COLOR_BLACK;
-	static u16 prevFontColor = ST_COLOR_WHITE;
+	static u16 prevBackGround = 0;
+	static u16 prevFontColor = 0;
 	Date_t current = getDateFromSeconds(getAllSeconds(), TRUE);
 	char dateStr[19] = {0};
 	dateToString(dateStr, &current);
 	strSplit(' ', dateStr);
 	if(prevBackGround != currentBackground) {
 		st7789_fill(currentBackground);
+        execCallBack(BACKGROUD_CHANGED);
 	}
 	if(current.year != prev.year || current.mon != prev.mon || current.day != prev.day || prevFontColor != currentColor[0]) {
 		prev.year = current.year;
@@ -114,11 +125,12 @@ void standWithUkraine(u32 xy, BaseParam_t logoXY) {
     u32 logo = (u32)(logoXY);
     u16 logoX = (u16)logo & 0xFFFF;
     u16 logoY = (u16)(logo>>16);
+    writeLogStr("Stand with Ukraine task");
 	st7789_write_string(x, y, "WITH UKRAINE", Font_11x18, currentColor[0], currentBackground);
 	st7789_draw_filled_rectangle(logoX, logoY, 60, 20, ST_COLOR_BLUE);
 	st7789_draw_filled_rectangle(logoX, logoY+20, 60, 20, ST_COLOR_YELLOW);
+    registerCallBack(standWithUkraine,xy,logoXY,BACKGROUD_CHANGED);
 }
-
 
 void testBtnClick(BaseSize_t count, BaseParam_t tickTime) {
     Time_t ticks = (Time_t)tickTime;
@@ -143,6 +155,15 @@ void disableDisplay(BaseSize_t arg_n, BaseParam_t arg_p);
 void enableDisplay(BaseSize_t n, BaseParam_t arguments);
 void stopwatchTask();
 
+void invertColors(BaseSize_t count, BaseParam_t time) {
+    if((Time_t)time < TICK_PER_SECOND) return;
+    puts("INVERT COLORS IN SCREEN");
+    currentBackground = ST_COLOR_WHITE-currentBackground;
+    currentColor[0] = ST_COLOR_WHITE-currentColor[0];
+    currentColor[1] = ST_COLOR_WHITE-currentColor[1];
+    execCallBack(invertColors);
+}
+
 static u32 stopwatchTimer;
 static void showTimer() {
     updateTimer(disableDisplay,0, NULL, TICK_PER_SECOND<<1);
@@ -159,43 +180,50 @@ static void showTimer() {
     char ticksStr[5];
     toStringDec(seconds, secondsStr);
     toStringDec(ticks, ticksStr);
-    st7789_write_string(10 ,SCREEN_HEIGHT/2-10, secondsStr, Font_16x26, currentColor[0], currentBackground);
+    st7789_write_string(10, SCREEN_HEIGHT/2-10, "sec:", Font_16x26, currentColor[0], currentBackground);
+    st7789_write_string(10+strSize("sec:")*16, SCREEN_HEIGHT/2-10, secondsStr, Font_16x26, currentColor[0], currentBackground);
     st7789_write_string(SCREEN_WIDTH-strSize(ticksStr)*16-10, SCREEN_HEIGHT/2-10, ticksStr, Font_16x26, currentColor[1], currentBackground);
 }
 
-void clearStopWatch() {
+void clearStopWatchScreen() {
     st7789_draw_filled_rectangle(10, SCREEN_HEIGHT/2-10, SCREEN_WIDTH, 26, currentBackground);
-    execCallBack(clearStopWatch);
+    execCallBack(clearStopWatchScreen);
 }
 
-void stopwatchTask() {
+void stopwatchTask(BaseSize_t count, BaseParam_t time) {
     static u08 state = 0;
+    Time_t t = (Time_t)time;
+    if(t > TICK_PER_SECOND) {
+        return;
+    }
     if(state) {
         SetTask((TaskMng)delCycleTask, 0, (BaseParam_t)showTimer);
-        updateTimer(disableDisplay,0, NULL, 12*TICK_PER_SECOND);
+        updateTimer(disableDisplay, 0, NULL, displayOnTimeout*TICK_PER_SECOND);
         state = 0;
         execCallBack(stopwatchTask);
         return;
     }
     state++;
     stopwatchTimer = getTick();
-    clearStopWatch();
+    clearStopWatchScreen();
     SetCycleTask(TICK_PER_SECOND>>4, showTimer, TRUE);
 }
 
 void disableDisplay(BaseSize_t arg_n, BaseParam_t arg_p) {
-    disconnectTaskFromSignal(stopwatchTask, PressedEvent);
-    connectTaskToSignal(enableDisplay, PressedEvent);
+    disconnectTaskFromSignal(stopwatchTask, ClickEvent);
+    disconnectTaskFromSignal(invertColors, ClickEvent);
+    connectTaskToSignal(enableDisplay, ReleasedEvent);
 	delCycleTask(arg_n, showTimeDate);
-    clearStopWatch();
+    clearStopWatchScreen();
 	display_enable(false);
 	execCallBack(disableDisplay);
 }
 
 void enableDisplay(BaseSize_t n, BaseParam_t arguments) {
-    disconnectTaskFromSignal(enableDisplay, PressedEvent);
-    connectTaskToSignal(stopwatchTask, PressedEvent);
-	Time_t seconds = 12;
+    disconnectTaskFromSignal(enableDisplay, ReleasedEvent);
+    connectTaskToSignal(stopwatchTask, ClickEvent);
+    connectTaskToSignal(invertColors, ClickEvent);
+	Time_t seconds = displayOnTimeout;
 	if(n>0) {
 		seconds = toIntDec(arguments);
 	}
@@ -206,7 +234,7 @@ void enableDisplay(BaseSize_t n, BaseParam_t arguments) {
 }
 
 static void displayCtr() {
-    connectTaskToSignal(enableDisplay, PressedEvent);
+    connectTaskToSignal(enableDisplay, ReleasedEvent);
 }
 
 int main() {
@@ -235,7 +263,7 @@ int main() {
     initInput();
     struct st7789_config display;
     initDisplay(&display);
-    for(uint8_t i = 0; i<2; i++) {
+    for(uint8_t i = 0; i<3; i++) {
         st7789_init(&display, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
     st7789_fill(currentBackground);
@@ -245,9 +273,12 @@ int main() {
     initWatchDog();
     SetCycleTask(TICK_PER_SECOND>>1, resetWatchDog, TRUE);
     SetIdleTask(idle);
-    SetTask(standWithUkraine, (SCREEN_HEIGHT-40)<<16|20, (BaseParam_t)(((u32)(SCREEN_HEIGHT-40))<<16 | (SCREEN_WIDTH-60)));
     SetTask((TaskMng)testButton, 0, NULL);
     SetTask((TaskMng)displayCtr, 0, NULL);
+    SetTask(standWithUkraine, (SCREEN_HEIGHT-40)<<16|20, (BaseParam_t)(((u32)(SCREEN_HEIGHT-40))<<16 | (SCREEN_WIDTH-60)));
+    for(int i = 1; i<30; i++) {
+        SetTimerTask((TaskMng)test1, i, NULL, TICK_PER_SECOND*i);
+    }
     multicore_launch_core1(runFemtOS);
     runFemtOS();
     return 0;
